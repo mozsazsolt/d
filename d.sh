@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =================================================================
-# GLOBÁLIS VÁLTOZÓK ÉS ALAPÉRTÉKEK
+# GLOBÁLIS VÁLTOZÓK
 # =================================================================
 IP_ADDR=""
 MASK=""
@@ -12,17 +12,9 @@ FW_IP=""
 FIRST_IP=""
 INTERFACE="ens33"
 
-# Felhasználói adatok (2-es gombbal töltődnek)
 USER_NAME="user2"
 SSH_PORT="6789"
 WIN_MAC=""
-
-# Színek
-ZOLD='\033[0;32m'
-KEK='\033[0;34m'
-SARGA='\033[1;33m'
-PIROS='\033[0;31m'
-NC='\033[0m'
 
 # =================================================================
 # IP SZÁMÍTÓ MOTOR
@@ -48,33 +40,35 @@ calculate_network() {
 # =================================================================
 
 case_2() {
-    echo -e "${KEK}[2. Feladat] Adatok és Paraméterek megadása${NC}"
-    # Hálózati adatok
+    echo "[2. Feladat] Adatok megadása és szoftverek letöltése"
     read -p "Alap IP (pl. 192.168.50.0): " IP_ADDR
     read -p "Maszk (pl. 26): " MASK
     calculate_network $IP_ADDR $MASK
 
-    # Egyéb paraméterek
-    read -p "Windows gép MAC címe (pl. 00:0c:29:11:22:33): " WIN_MAC
-    read -p "Létrehozandó felhasználó neve (alap: user2): " USER_NAME
+    read -p "Windows gép MAC címe: " WIN_MAC
+    read -p "Felhasználó neve (alap: user2): " USER_NAME
     USER_NAME=${USER_NAME:-user2}
-    read -p "SSH új portja (alap: 6789): " SSH_PORT
+    read -p "SSH port (alap: 6789): " SSH_PORT
     SSH_PORT=${SSH_PORT:-6789}
 
-    echo -e "\n${ZOLD}MINDEN ADAT RÖGZÍTVE ÉS KISZÁMÍTVA!${NC}"
+    echo "--- Szoftverek telepítése (MC, DHCP, NFS, Samba, Apache, VSFTPD, SSH) ---"
+    sudo apt update
+    sudo apt install -y mc isc-dhcp-server nfs-kernel-server samba apache2 vsftpd openssh-server
+
+    echo ""
+    echo "MINDEN ADAT RÖGZÍTVE ÉS CSOMAG TELEPÍTVE!"
     echo "-------------------------------------------------------"
-    echo -e "Szerver IP:    ${SARGA}$SERVER_IP${NC} | Tűzfal: $FW_IP"
-    echo -e "Windows MAC:   $WIN_MAC"
-    echo -e "Felhasználó:   $USER_NAME"
-    echo -e "SSH Port:      $SSH_PORT"
+    echo "Szerver IP:    $SERVER_IP | Tűzfal: $FW_IP"
+    echo "Netmask:       $NETMASK"
+    echo "Windows MAC:   $WIN_MAC"
+    echo "Felhasználó:   $USER_NAME"
+    echo "SSH Port:      $SSH_PORT"
     echo "-------------------------------------------------------"
 }
 
 case_3() {
-    if [ -z "$WIN_MAC" ]; then echo -e "${PIROS}Hiba: Előbb add meg az adatokat a 2-es gombbal!${NC}"; return; fi
-    echo -e "${KEK}[3. Feladat] DHCP telepítése...${NC}"
-    sudo apt update && sudo apt install -y isc-dhcp-server
-    
+    if [ -z "$WIN_MAC" ]; then echo "Hiba: Előbb 2-es gomb!"; return; fi
+    echo "[3. Feladat] DHCP konfigurálása..."
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
 subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
   range $FIRST_IP ${NETWORK_PREFIX}.30;
@@ -90,24 +84,23 @@ host windows-client {
 EOF
     sudo sed -i "s/INTERFACESv4=\"\"/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
     sudo systemctl restart isc-dhcp-server
-    echo -e "${ZOLD}DHCP kész!${NC}"
+    echo "DHCP kész!"
 }
 
 case_5() {
-    echo -e "${KEK}[5. Feladat] NFS megosztás...${NC}"
-    sudo apt install -y nfs-kernel-server
+    echo "[5. Feladat] NFS konfigurálása..."
     sudo mkdir -p /srv/megosztas && sudo chmod 777 /srv/megosztas
     echo "/srv/megosztas *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
     sudo exportfs -a && sudo systemctl restart nfs-kernel-server
+    echo "NFS kész!"
 }
 
 case_6() {
-    echo -e "${KEK}[6. Feladat] SAMBA ($USER_NAME)...${NC}"
-    sudo apt install -y samba
+    echo "[6. Feladat] SAMBA konfigurálása ($USER_NAME)..."
     sudo mkdir -p /srv/kozos "/srv/$USER_NAME" && sudo chmod 777 /srv/kozos
     id "$USER_NAME" &>/dev/null || sudo useradd -m "$USER_NAME"
     sudo chown "$USER_NAME":"$USER_NAME" "/srv/$USER_NAME"
-    echo -e "${SARGA}Adj meg Samba jelszót a(z) $USER_NAME felhasználónak!${NC}"
+    echo "Adj meg Samba jelszót a(z) $USER_NAME felhasználónak!"
     sudo smbpasswd -a "$USER_NAME"
 
     cat <<EOF | sudo tee -a /etc/samba/smb.conf
@@ -123,11 +116,11 @@ case_6() {
    read only = no
 EOF
     sudo systemctl restart smbd
+    echo "Samba kész!"
 }
 
 case_7() {
-    echo -e "${KEK}[7. Feladat] Webszerver...${NC}"
-    sudo apt install -y apache2
+    echo "[7. Feladat] Webszerver konfigurálása..."
     sudo mkdir -p /var/www/ceg1.hu
     echo "<html><body><h1>Cég1 oldala</h1></body></html>" | sudo tee /var/www/ceg1.hu/index.html
     echo "<VirtualHost *:80>
@@ -136,24 +129,26 @@ case_7() {
 </VirtualHost>" | sudo tee /etc/apache2/sites-available/ceg1.conf
     sudo a2ensite ceg1.conf && sudo a2dissite 000-default.conf
     sudo systemctl reload apache2
+    echo "Webszerver kész!"
 }
 
 case_8() {
-    echo -e "${KEK}[8. Feladat] FTP ($USER_NAME korlátozás)...${NC}"
-    sudo apt install -y vsftpd
+    echo "[8. Feladat] FTP konfigurálása ($USER_NAME)..."
     sudo sed -i 's/anonymous_enable=YES/anonymous_enable=NO/g; s/#local_enable=YES/local_enable=YES/g; s/#write_enable=YES/write_enable=YES/g; s/#chroot_local_user=YES/chroot_local_user=YES/g' /etc/vsftpd.conf
     echo "allow_writeable_chroot=YES" | sudo tee -a /etc/vsftpd.conf
     sudo systemctl restart vsftpd
+    echo "FTP kész!"
 }
 
 case_9() {
-    echo -e "${KEK}[9. Feladat] SSH Port $SSH_PORT...${NC}"
+    echo "[9. Feladat] SSH Port átállítása ($SSH_PORT)..."
     sudo sed -i "s/Port 22/Port $SSH_PORT/g; s/#Port 22/Port $SSH_PORT/g" /etc/ssh/sshd_config
     sudo systemctl restart ssh
+    echo "SSH kész!"
 }
 
 case_10() {
-    echo -e "${PIROS}ÖNMEGSEMMISÍTÉS...${NC}"
+    echo "ÖNMEGSEMMISÍTÉS..."
     history -c && rm -- "$0"
     exit 0
 }
@@ -162,8 +157,9 @@ case_10() {
 # FŐMENÜ
 # =================================================================
 while true; do
-    echo -e "\n${SARGA}ZH MEGOLDÓ - Felhasználó: $USER_NAME | IP: ${SERVER_IP:-'NINCS'}${NC}"
-    echo "2. ADATOK MEGADÁSA (Ezzel kezdj!)"
+    echo ""
+    echo "--- ZH SEGÉD - IP: ${SERVER_IP:-'NINCS'} ---"
+    echo "2. ADATOK MEGADÁSA ÉS TELEPÍTÉS (Ezzel kezdj!)"
     echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH"
     echo "10. ÖNMEGSEMMISÍTÉS"
     echo "q. Kilépés"
