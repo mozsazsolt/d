@@ -1,43 +1,84 @@
 #!/bin/bash
 
 # =================================================================
-# BEÁLLÍTÁSOK - A $172.16.50.0/25$ HÁLÓZATHOZ IGAZÍTVA
+# GLOBÁLIS VÁLTOZÓK (A 2. menüpont tölti fel)
 # =================================================================
-XXX="50"                        # A te azonosítód
-NETWORK_PREFIX="172.16.$XXX"    # 172.16.50
-INTERFACE="ens33"               # A hálózati kártya neve
-# A szerver címe (utolsó előtti): .125
-# A tűzfal címe (utolsó): .126
-# =================================================================
+XXX=""
+MASK=""
+NETWORK_PREFIX=""
+NETMASK=""
+SERVER_IP=""
+FW_IP=""
+INTERFACE="ens33"
 
-# Színek
+# Színek a jobb olvashatóságért
 ZOLD='\033[0;32m'
 KEK='\033[0;34m'
+SARGA='\033[1;33m'
+PIROS='\033[0;31m'
 NC='\033[0m'
 
+# =================================================================
+# FUNKCIÓK
+# =================================================================
+
+case_2() {
+    echo -e "${KEK}[2. Feladat] Adatok megadása és számítás${NC}"
+    read -p "Add meg az XXX értéket (pl. 50): " XXX
+    read -p "Add meg a maszkot (25 vagy 26): " MASK
+    
+    NETWORK_PREFIX="192.168.$XXX"
+    
+    if [ "$MASK" -eq 26 ]; then
+        NETMASK="255.255.255.192"
+        FIRST_IP="${NETWORK_PREFIX}.1"
+        SERVER_IP="${NETWORK_PREFIX}.61"
+        FW_IP="${NETWORK_PREFIX}.62"
+        LAST_IP="${NETWORK_PREFIX}.62"
+    elif [ "$MASK" -eq 25 ]; then
+        NETMASK="255.255.255.128"
+        FIRST_IP="${NETWORK_PREFIX}.1"
+        SERVER_IP="${NETWORK_PREFIX}.125"
+        FW_IP="${NETWORK_PREFIX}.126"
+        LAST_IP="${NETWORK_PREFIX}.126"
+    else
+        echo -e "${PIROS}Hiba: Csak 25 vagy 26 maszkot tudok számolni!${NC}"
+        return
+    fi
+
+    echo -e "\n${ZOLD}SZÁMÍTOTT ÉRTÉKEK A DOKUMENTÁCIÓHOZ:${NC}"
+    echo "-------------------------------------------------------"
+    echo -e "Hálózat:          ${SARGA}${NETWORK_PREFIX}.0 / $MASK${NC}"
+    echo -e "Netmask:          $NETMASK"
+    echo -e "Első osztható IP: ${SARGA}$FIRST_IP${NC} (DHCP tartomány eleje)"
+    echo -e "Szerver IP:       ${SARGA}$SERVER_IP${NC} (Utolsó előtti cím)"
+    echo -e "Tűzfal/GW IP:     ${SARGA}$FW_IP${NC} (Utolsó cím)"
+    echo "-------------------------------------------------------"
+}
+
 case_3() {
-    echo -e "${KEK}[3. Feladat] DHCP telepítése (172.16.50.0/25)...${NC}"
+    if [ -z "$XXX" ]; then echo -e "${PIROS}Hiba: Előbb a 2-es gombbal add meg az adatokat!${NC}"; return; fi
+    echo -e "${KEK}[3. Feladat] DHCP telepítése...${NC}"
     sudo apt update && sudo apt install -y isc-dhcp-server
     
-    # DHCP Konfiguráció
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
-subnet ${NETWORK_PREFIX}.0 netmask 255.255.255.128 {
+subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
   range ${NETWORK_PREFIX}.1 ${NETWORK_PREFIX}.30;
-  option routers ${NETWORK_PREFIX}.126;
-  option domain-name-servers ${NETWORK_PREFIX}.125;
+  option routers $FW_IP;
+  option domain-name-servers $SERVER_IP;
   default-lease-time 600;
   max-lease-time 7200;
 }
 
 host windows-client {
-  # Cseréld ki a MAC címet a Windows gépére a teszt előtt!
+  # Itt írd át a MAC címet a saját Windowsodéra!
   hardware ethernet 00:0c:29:11:22:33;
   fixed-address ${NETWORK_PREFIX}.50;
 }
 EOF
     sudo sed -i "s/INTERFACESv4=\"\"/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
     sudo systemctl restart isc-dhcp-server
-    echo -e "${ZOLD}DHCP kész! Ellenőrizd: systemctl status isc-dhcp-server${NC}"
+    echo -e "${ZOLD}DHCP kész!${NC}"
 }
 
 case_5() {
@@ -50,7 +91,7 @@ case_5() {
     fi
     sudo exportfs -a
     sudo systemctl restart nfs-kernel-server
-    echo -e "${ZOLD}NFS kész! Csatolás kliensen: mount ${NETWORK_PREFIX}.125:/srv/megosztas /mnt${NC}"
+    echo -e "${ZOLD}NFS kész! Csatolás kliensen: mount $SERVER_IP:/srv/megosztas /mnt${NC}"
 }
 
 case_6() {
@@ -62,7 +103,7 @@ case_6() {
         sudo useradd -m user2
     fi
     sudo chown user2:user2 /srv/user2
-    echo -e "${ZOLD}Adj meg jelszót a Samba user2-nek!${NC}"
+    echo -e "${SARGA}Adj meg jelszót a Samba user2-nek!${NC}"
     sudo smbpasswd -a user2
 
     cat <<EOF | sudo tee -a /etc/samba/smb.conf
@@ -79,7 +120,7 @@ case_6() {
    read only = no
 EOF
     sudo systemctl restart smbd
-    echo -e "${ZOLD}SAMBA kész! Elérés Windowsról: \\\\${NETWORK_PREFIX}.125\\${NC}"
+    echo -e "${ZOLD}SAMBA kész! Elérés Windowsról: \\\\$SERVER_IP\\${NC}"
 }
 
 case_7() {
@@ -96,7 +137,7 @@ EOF
     sudo a2ensite ceg1.conf
     sudo a2dissite 000-default.conf
     sudo systemctl reload apache2
-    echo -e "${ZOLD}Web kész! Elérés: http://${NETWORK_PREFIX}.125${NC}"
+    echo -e "${ZOLD}Web kész! Elérés: http://$SERVER_IP${NC}"
 }
 
 case_8() {
@@ -108,7 +149,7 @@ case_8() {
     sudo sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/g' /etc/vsftpd.conf
     echo "allow_writeable_chroot=YES" | sudo tee -a /etc/vsftpd.conf
     sudo systemctl restart vsftpd
-    echo -e "${ZOLD}FTP kész! user2 a saját mappájába van zárva.${NC}"
+    echo -e "${ZOLD}FTP kész! user2 korlátozva.${NC}"
 }
 
 case_9() {
@@ -119,19 +160,40 @@ case_9() {
     echo -e "${ZOLD}SSH kész! Port: 6789${NC}"
 }
 
-# Főmenü
+case_10() {
+    echo -e "${PIROS}NYOMOK ELTÜNTETÉSE ÉS ÖNMEGSEMMISÍTÉS...${NC}"
+    # Bash history törlése a memóriából
+    history -c
+    # A fájl törlése
+    rm -- "$0"
+    echo -e "${SARGA}A fájl törölve. Kilépés...${NC}"
+    exit 0
+}
+
+# =================================================================
+# FŐMENÜ
+# =================================================================
+
 while true; do
-    echo -e "\nZH MEGOLDÓ - IP: ${NETWORK_PREFIX}.125"
-    echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH | q. Kilépés"
+    echo -e "\n${KEK}===================================================${NC}"
+    echo -e "${SARGA}   MINTA ZH MEGOLDÓ - IP: ${SERVER_IP:-'NINCS'} ${NC}"
+    echo -e "${KEK}===================================================${NC}"
+    echo "2. ADATOK MEGADÁSA ÉS SZÁMÍTÁSA (Kezdd ezzel!)"
+    echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH"
+    echo "10. ÖNMEGSEMMISÍTÉS (Szkript törlése)"
+    echo "q. Kilépés"
+    echo "---------------------------------------------------"
     read -p "Válassz: " opt
     case $opt in
+        2) case_2 ;;
         3) case_3 ;;
         5) case_5 ;;
         6) case_6 ;;
         7) case_7 ;;
         8) case_8 ;;
         9) case_9 ;;
+        10) case_10 ;;
         q) exit 0 ;;
-        *) echo "Hibás opció!" ;;
+        *) echo -e "${PIROS}Hibás opció!${NC}" ;;
     esac
 done
