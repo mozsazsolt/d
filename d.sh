@@ -1,17 +1,18 @@
 #!/bin/bash
 
 # =================================================================
-# GLOBÁLIS VÁLTOZÓK (A 2. menüpont tölti fel)
+# GLOBÁLIS VÁLTOZÓK
 # =================================================================
-XXX=""
+IP_ADDR=""
 MASK=""
 NETWORK_PREFIX=""
 NETMASK=""
 SERVER_IP=""
 FW_IP=""
+FIRST_IP=""
 INTERFACE="ens33"
 
-# Színek a jobb olvashatóságért
+# Színek a scannelt megjelenéshez
 ZOLD='\033[0;32m'
 KEK='\033[0;34m'
 SARGA='\033[1;33m'
@@ -19,89 +20,94 @@ PIROS='\033[0;31m'
 NC='\033[0m'
 
 # =================================================================
-# FUNKCIÓK
+# SEGÉDFÜGGVÉNY: IP/MASK SZÁMÍTÁS (BINÁRIS MŰVELETEKKEL)
+# =================================================================
+calculate_network() {
+    local ip=$1
+    local mask=$2
+
+    # Alhálózati maszk kiszámítása (pl. 26 -> 255.255.255.192)
+    local full_mask_bin=$(( 0xFFFFFFFF ^ ((1 << (32 - mask)) - 1) ))
+    NETMASK="$(( (full_mask_bin >> 24) & 255 )).$(( (full_mask_bin >> 16) & 255 )).$(( (full_mask_bin >> 8) & 255 )).$(( full_mask_bin & 255 ))"
+
+    # IP felbontása és hálózati cím meghatározása
+    IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+    local ip_bin=$(( (i1 << 24) + (i2 << 16) + (i3 << 8) + i4 ))
+    local net_bin=$(( ip_bin & full_mask_bin ))
+    
+    # Broadcast cím meghatározása
+    local brd_bin=$(( net_bin | ((1 << (32 - mask)) - 1) ))
+    
+    # Címek kinyerése a ZH szabályai szerint:
+    # Tűzfal (FW_IP) = Utolsó használható IP (Broadcast - 1)
+    FW_IP="$(( (brd_bin - 1 >> 24) & 255 )).$(( (brd_bin - 1 >> 16) & 255 )).$(( (brd_bin - 1 >> 8) & 255 )).$(( (brd_bin - 1) & 255 ))"
+    # Szerver (SERVER_IP) = Utolsó előtti használható IP (Broadcast - 2)
+    SERVER_IP="$(( (brd_bin - 2 >> 24) & 255 )).$(( (brd_bin - 2 >> 16) & 255 )).$(( (brd_bin - 2 >> 8) & 255 )).$(( (brd_bin - 2) & 255 ))"
+    # Első IP = Hálózati cím + 1
+    FIRST_IP="$(( (net_bin + 1 >> 24) & 255 )).$(( (net_bin + 1 >> 16) & 255 )).$(( (net_bin + 1 >> 8) & 255 )).$(( (net_bin + 1) & 255 ))"
+    
+    NETWORK_PREFIX="$(echo $SERVER_IP | cut -d. -f1-3)"
+}
+
+# =================================================================
+# MENÜPONTOK
 # =================================================================
 
 case_2() {
-    echo -e "${KEK}[2. Feladat] Adatok megadása és számítás${NC}"
-    read -p "Add meg az XXX értéket (pl. 50): " XXX
-    read -p "Add meg a maszkot (25 vagy 26): " MASK
+    echo -e "${KEK}[2. Feladat] Univerzális Adatmegadás${NC}"
+    read -p "Add meg az alap IP-t (pl. 192.168.50.0): " IP_ADDR
+    read -p "Add meg a maszkot (pl. 24, 25, 26): " MASK
     
-    NETWORK_PREFIX="192.168.$XXX"
-    
-    if [ "$MASK" -eq 26 ]; then
-        NETMASK="255.255.255.192"
-        FIRST_IP="${NETWORK_PREFIX}.1"
-        SERVER_IP="${NETWORK_PREFIX}.61"
-        FW_IP="${NETWORK_PREFIX}.62"
-        LAST_IP="${NETWORK_PREFIX}.62"
-    elif [ "$MASK" -eq 25 ]; then
-        NETMASK="255.255.255.128"
-        FIRST_IP="${NETWORK_PREFIX}.1"
-        SERVER_IP="${NETWORK_PREFIX}.125"
-        FW_IP="${NETWORK_PREFIX}.126"
-        LAST_IP="${NETWORK_PREFIX}.126"
-    else
-        echo -e "${PIROS}Hiba: Csak 25 vagy 26 maszkot tudok számolni!${NC}"
-        return
-    fi
+    calculate_network $IP_ADDR $MASK
 
-    echo -e "\n${ZOLD}SZÁMÍTOTT ÉRTÉKEK A DOKUMENTÁCIÓHOZ:${NC}"
+    echo -e "\n${ZOLD}SZÁMÍTOTT ÉRTÉKEK A ZH-HOZ:${NC}"
     echo "-------------------------------------------------------"
-    echo -e "Hálózat:          ${SARGA}${NETWORK_PREFIX}.0 / $MASK${NC}"
-    echo -e "Netmask:          $NETMASK"
-    echo -e "Első osztható IP: ${SARGA}$FIRST_IP${NC} (DHCP tartomány eleje)"
-    echo -e "Szerver IP:       ${SARGA}$SERVER_IP${NC} (Utolsó előtti cím)"
-    echo -e "Tűzfal/GW IP:     ${SARGA}$FW_IP${NC} (Utolsó cím)"
+    echo -e "Hálózati maszk:   ${SARGA}$NETMASK${NC}"
+    echo -e "Első IP:          ${SARGA}$FIRST_IP${NC}"
+    echo -e "Szerver (te):     ${SARGA}$SERVER_IP${NC} (Utolsó előtti)"
+    echo -e "Tűzfal (átjáró):  ${SARGA}$FW_IP${NC} (Utolsó)"
     echo "-------------------------------------------------------"
 }
 
 case_3() {
-    if [ -z "$XXX" ]; then echo -e "${PIROS}Hiba: Előbb a 2-es gombbal add meg az adatokat!${NC}"; return; fi
+    if [ -z "$SERVER_IP" ]; then echo -e "${PIROS}Hiba: Előbb használd a 2-es gombot!${NC}"; return; fi
     echo -e "${KEK}[3. Feladat] DHCP telepítése...${NC}"
     sudo apt update && sudo apt install -y isc-dhcp-server
     
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
 subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
-  range ${NETWORK_PREFIX}.1 ${NETWORK_PREFIX}.30;
+  range $FIRST_IP ${NETWORK_PREFIX}.30;
   option routers $FW_IP;
   option domain-name-servers $SERVER_IP;
   default-lease-time 600;
   max-lease-time 7200;
 }
-
 host windows-client {
-  # Itt írd át a MAC címet a saját Windowsodéra!
   hardware ethernet 00:0c:29:11:22:33;
   fixed-address ${NETWORK_PREFIX}.50;
 }
 EOF
     sudo sed -i "s/INTERFACESv4=\"\"/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
     sudo systemctl restart isc-dhcp-server
-    echo -e "${ZOLD}DHCP kész!${NC}"
+    echo -e "${ZOLD}DHCP kész! Ellenőrizd: systemctl status isc-dhcp-server${NC}"
 }
 
 case_5() {
     echo -e "${KEK}[5. Feladat] NFS megosztás...${NC}"
     sudo apt install -y nfs-kernel-server
-    sudo mkdir -p /srv/megosztas
-    sudo chmod 777 /srv/megosztas
+    sudo mkdir -p /srv/megosztas && sudo chmod 777 /srv/megosztas
     if ! grep -q "/srv/megosztas" /etc/exports; then
         echo "/srv/megosztas *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
     fi
-    sudo exportfs -a
-    sudo systemctl restart nfs-kernel-server
-    echo -e "${ZOLD}NFS kész! Csatolás kliensen: mount $SERVER_IP:/srv/megosztas /mnt${NC}"
+    sudo exportfs -a && sudo systemctl restart nfs-kernel-server
+    echo -e "${ZOLD}NFS kész! Kliens mount: mount $SERVER_IP:/srv/megosztas /mnt${NC}"
 }
 
 case_6() {
     echo -e "${KEK}[6. Feladat] SAMBA (kozos + user2)...${NC}"
     sudo apt install -y samba
-    sudo mkdir -p /srv/kozos /srv/user2
-    sudo chmod 777 /srv/kozos
-    if ! id "user2" &>/dev/null; then
-        sudo useradd -m user2
-    fi
+    sudo mkdir -p /srv/kozos /srv/user2 && sudo chmod 777 /srv/kozos
+    id "user2" &>/dev/null || sudo useradd -m user2
     sudo chown user2:user2 /srv/user2
     echo -e "${SARGA}Adj meg jelszót a Samba user2-nek!${NC}"
     sudo smbpasswd -a user2
@@ -112,7 +118,6 @@ case_6() {
    browseable = yes
    read only = no
    guest ok = yes
-
 [user2]
    path = /srv/user2
    valid users = user2
@@ -120,7 +125,7 @@ case_6() {
    read only = no
 EOF
     sudo systemctl restart smbd
-    echo -e "${ZOLD}SAMBA kész! Elérés Windowsról: \\\\$SERVER_IP\\${NC}"
+    echo -e "${ZOLD}SAMBA kész! Elérés: \\\\$SERVER_IP\\${NC}"
 }
 
 case_7() {
@@ -134,39 +139,32 @@ case_7() {
     DocumentRoot /var/www/ceg1.hu
 </VirtualHost>
 EOF
-    sudo a2ensite ceg1.conf
-    sudo a2dissite 000-default.conf
+    sudo a2ensite ceg1.conf && sudo a2dissite 000-default.conf
     sudo systemctl reload apache2
     echo -e "${ZOLD}Web kész! Elérés: http://$SERVER_IP${NC}"
 }
 
 case_8() {
-    echo -e "${KEK}[8. Feladat] FTP (vsftpd + user2 korlátozás)...${NC}"
+    echo -e "${KEK}[8. Feladat] FTP (user2 korlátozás)...${NC}"
     sudo apt install -y vsftpd
-    sudo sed -i 's/anonymous_enable=YES/anonymous_enable=NO/g' /etc/vsftpd.conf
-    sudo sed -i 's/#local_enable=YES/local_enable=YES/g' /etc/vsftpd.conf
-    sudo sed -i 's/#write_enable=YES/write_enable=YES/g' /etc/vsftpd.conf
-    sudo sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/g' /etc/vsftpd.conf
+    sudo sed -i 's/anonymous_enable=YES/anonymous_enable=NO/g; s/#local_enable=YES/local_enable=YES/g; s/#write_enable=YES/write_enable=YES/g; s/#chroot_local_user=YES/chroot_local_user=YES/g' /etc/vsftpd.conf
     echo "allow_writeable_chroot=YES" | sudo tee -a /etc/vsftpd.conf
     sudo systemctl restart vsftpd
-    echo -e "${ZOLD}FTP kész! user2 korlátozva.${NC}"
+    echo -e "${ZOLD}FTP kész! user2 korlátozva a saját mappájába.${NC}"
 }
 
 case_9() {
     echo -e "${KEK}[9. Feladat] SSH port 6789...${NC}"
-    sudo sed -i 's/#Port 22/Port 6789/g' /etc/ssh/sshd_config
-    sudo sed -i 's/Port 22/Port 6789/g' /etc/ssh/sshd_config
+    sudo sed -i 's/#Port 22/Port 6789/g; s/Port 22/Port 6789/g' /etc/ssh/sshd_config
     sudo systemctl restart ssh
     echo -e "${ZOLD}SSH kész! Port: 6789${NC}"
 }
 
 case_10() {
-    echo -e "${PIROS}NYOMOK ELTÜNTETÉSE ÉS ÖNMEGSEMMISÍTÉS...${NC}"
-    # Bash history törlése a memóriából
+    echo -e "${PIROS}ÖNMEGSEMMISÍTÉS INDÍTVA...${NC}"
     history -c
-    # A fájl törlése
     rm -- "$0"
-    echo -e "${SARGA}A fájl törölve. Kilépés...${NC}"
+    echo -e "${SARGA}Szkript törölve, előzmények ürítve. Kilépés...${NC}"
     exit 0
 }
 
@@ -175,25 +173,16 @@ case_10() {
 # =================================================================
 
 while true; do
-    echo -e "\n${KEK}===================================================${NC}"
-    echo -e "${SARGA}   MINTA ZH MEGOLDÓ - IP: ${SERVER_IP:-'NINCS'} ${NC}"
-    echo -e "${KEK}===================================================${NC}"
+    echo -e "\n${SARGA}ZH MEGOLDÓ - Aktuális IP: ${SERVER_IP:-'Nincs megadva'}${NC}"
     echo "2. ADATOK MEGADÁSA ÉS SZÁMÍTÁSA (Kezdd ezzel!)"
     echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH"
-    echo "10. ÖNMEGSEMMISÍTÉS (Szkript törlése)"
+    echo "10. ÖNMEGSEMMISÍTÉS"
     echo "q. Kilépés"
-    echo "---------------------------------------------------"
-    read -p "Válassz: " opt
+    read -p "Válassz opciót: " opt
     case $opt in
-        2) case_2 ;;
-        3) case_3 ;;
-        5) case_5 ;;
-        6) case_6 ;;
-        7) case_7 ;;
-        8) case_8 ;;
-        9) case_9 ;;
-        10) case_10 ;;
+        2) case_2 ;; 3) case_3 ;; 5) case_5 ;; 6) case_6 ;;
+        7) case_7 ;; 8) case_8 ;; 9) case_9 ;; 10) case_10 ;;
         q) exit 0 ;;
-        *) echo -e "${PIROS}Hibás opció!${NC}" ;;
+        *) echo -e "${PIROS}Hibás választás!${NC}" ;;
     esac
 done
