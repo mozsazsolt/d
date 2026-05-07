@@ -12,10 +12,6 @@ FW_IP=""
 FIRST_IP=""
 INTERFACE="ens33"
 
-USER_NAME="user2"
-SSH_PORT="6789"
-WIN_MAC=""
-
 # =================================================================
 # IP SZÁMÍTÓ MOTOR
 # =================================================================
@@ -40,35 +36,25 @@ calculate_network() {
 # =================================================================
 
 case_2() {
-    echo "[2. Feladat] Adatok megadása és szoftverek letöltése"
+    echo "[2. Feladat] Hálózati adatok és szoftverek letöltése"
     read -p "Alap IP (pl. 192.168.50.0): " IP_ADDR
     read -p "Maszk (pl. 26): " MASK
     calculate_network $IP_ADDR $MASK
 
-    read -p "Windows gép MAC címe: " WIN_MAC
-    read -p "Felhasználó neve (alap: user2): " USER_NAME
-    USER_NAME=${USER_NAME:-user2}
-    read -p "SSH port (alap: 6789): " SSH_PORT
-    SSH_PORT=${SSH_PORT:-6789}
-
-    echo "--- Szoftverek telepítése (MC, DHCP, NFS, Samba, Apache, VSFTPD, SSH) ---"
+    echo "--- Csomagok letöltése (MC, DHCP, NFS, Samba, Apache, FTP, SSH) ---"
     sudo apt update
     sudo apt install -y mc isc-dhcp-server nfs-kernel-server samba apache2 vsftpd openssh-server
 
     echo ""
-    echo "MINDEN ADAT RÖGZÍTVE ÉS CSOMAG TELEPÍTVE!"
-    echo "-------------------------------------------------------"
-    echo "Szerver IP:    $SERVER_IP | Tűzfal: $FW_IP"
-    echo "Netmask:       $NETMASK"
-    echo "Windows MAC:   $WIN_MAC"
-    echo "Felhasználó:   $USER_NAME"
-    echo "SSH Port:      $SSH_PORT"
-    echo "-------------------------------------------------------"
+    echo "Hálózat kiszámítva és szoftverek telepítve."
+    echo "Szerver IP: $SERVER_IP | Tűzfal: $FW_IP | Maszk: $NETMASK"
 }
 
 case_3() {
-    if [ -z "$WIN_MAC" ]; then echo "Hiba: Előbb 2-es gomb!"; return; fi
-    echo "[3. Feladat] DHCP konfigurálása..."
+    if [ -z "$SERVER_IP" ]; then echo "Hiba: Előbb 2-es gomb!"; return; fi
+    echo "[3. Feladat] DHCP konfigurálása"
+    read -p "Add meg a Windows kliens MAC címét: " WIN_MAC
+    
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
 subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
   range $FIRST_IP ${NETWORK_PREFIX}.30;
@@ -88,7 +74,7 @@ EOF
 }
 
 case_5() {
-    echo "[5. Feladat] NFS konfigurálása..."
+    echo "[5. Feladat] NFS konfigurálása"
     sudo mkdir -p /srv/megosztas && sudo chmod 777 /srv/megosztas
     echo "/srv/megosztas *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
     sudo exportfs -a && sudo systemctl restart nfs-kernel-server
@@ -96,12 +82,13 @@ case_5() {
 }
 
 case_6() {
-    echo "[6. Feladat] SAMBA konfigurálása ($USER_NAME)..."
-    sudo mkdir -p /srv/kozos "/srv/$USER_NAME" && sudo chmod 777 /srv/kozos
-    id "$USER_NAME" &>/dev/null || sudo useradd -m "$USER_NAME"
-    sudo chown "$USER_NAME":"$USER_NAME" "/srv/$USER_NAME"
-    echo "Adj meg Samba jelszót a(z) $USER_NAME felhasználónak!"
-    sudo smbpasswd -a "$USER_NAME"
+    echo "[6. Feladat] SAMBA konfigurálása"
+    read -p "Milyen felhasználót hozzak létre? (pl. user2): " L_USER
+    sudo mkdir -p /srv/kozos "/srv/$L_USER" && sudo chmod 777 /srv/kozos
+    id "$L_USER" &>/dev/null || sudo useradd -m "$L_USER"
+    sudo chown "$L_USER":"$L_USER" "/srv/$L_USER"
+    echo "Samba jelszó beállítása $L_USER számára:"
+    sudo smbpasswd -a "$L_USER"
 
     cat <<EOF | sudo tee -a /etc/samba/smb.conf
 [kozos]
@@ -109,9 +96,9 @@ case_6() {
    browseable = yes
    read only = no
    guest ok = yes
-[$USER_NAME]
-   path = /srv/$USER_NAME
-   valid users = $USER_NAME
+[$L_USER]
+   path = /srv/$L_USER
+   valid users = $L_USER
    browseable = yes
    read only = no
 EOF
@@ -120,7 +107,7 @@ EOF
 }
 
 case_7() {
-    echo "[7. Feladat] Webszerver konfigurálása..."
+    echo "[7. Feladat] Webszerver konfigurálása"
     sudo mkdir -p /var/www/ceg1.hu
     echo "<html><body><h1>Cég1 oldala</h1></body></html>" | sudo tee /var/www/ceg1.hu/index.html
     echo "<VirtualHost *:80>
@@ -133,7 +120,7 @@ case_7() {
 }
 
 case_8() {
-    echo "[8. Feladat] FTP konfigurálása ($USER_NAME)..."
+    echo "[8. Feladat] FTP konfigurálása (chroot)"
     sudo sed -i 's/anonymous_enable=YES/anonymous_enable=NO/g; s/#local_enable=YES/local_enable=YES/g; s/#write_enable=YES/write_enable=YES/g; s/#chroot_local_user=YES/chroot_local_user=YES/g' /etc/vsftpd.conf
     echo "allow_writeable_chroot=YES" | sudo tee -a /etc/vsftpd.conf
     sudo systemctl restart vsftpd
@@ -141,14 +128,15 @@ case_8() {
 }
 
 case_9() {
-    echo "[9. Feladat] SSH Port átállítása ($SSH_PORT)..."
-    sudo sed -i "s/Port 22/Port $SSH_PORT/g; s/#Port 22/Port $SSH_PORT/g" /etc/ssh/sshd_config
+    echo "[9. Feladat] SSH Port átállítása"
+    read -p "Melyik portot állítsam be? (pl. 6789): " S_PORT
+    sudo sed -i "s/Port 22/Port $S_PORT/g; s/#Port 22/Port $S_PORT/g" /etc/ssh/sshd_config
     sudo systemctl restart ssh
-    echo "SSH kész!"
+    echo "SSH kész a(z) $S_PORT porton!"
 }
 
 case_10() {
-    echo "ÖNMEGSEMMISÍTÉS..."
+    echo "ÖNMEGSEMMISÍTÉS ÉS KILÉPÉS..."
     history -c && rm -- "$0"
     exit 0
 }
@@ -159,7 +147,7 @@ case_10() {
 while true; do
     echo ""
     echo "--- ZH SEGÉD - IP: ${SERVER_IP:-'NINCS'} ---"
-    echo "2. ADATOK MEGADÁSA ÉS TELEPÍTÉS (Ezzel kezdj!)"
+    echo "2. ADATOK ÉS TELEPÍTÉS"
     echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH"
     echo "10. ÖNMEGSEMMISÍTÉS"
     echo "q. Kilépés"
