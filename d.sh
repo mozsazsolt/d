@@ -38,22 +38,45 @@ calculate_network() {
 case_2() {
     echo "[2. Feladat] Adatok kinyerése és szoftverek letöltése"
 
-    # Automatikus IP és Maszk kinyerése a rendszer alapján
+    # 1. Kinyerjük a VALÓS IP-t és Maszkot a kártyáról (amit a Netplan beállított)
     EXT_IP=$(ip -o -4 addr show | awk '{print $4}' | grep -v '127.0.0.1' | head -n 1)
+    
+    # 2. Kinyerjük a VALÓS Router/Tűzfal címet az aktív routing táblából
+    EXT_GW=$(ip route show default | awk '{print $3}' | head -n 1)
 
     if [ ! -z "$EXT_IP" ]; then
         IP_ADDR=$(echo $EXT_IP | cut -d/ -f1)
         MASK=$(echo $EXT_IP | cut -d/ -f2)
-        echo "Észlelt hálózat: $IP_ADDR/$MASK"
         
-        # Kiszámoljuk a hálózat alapját (pl. .0) a kalkulátorhoz
+        # Kiszámoljuk a maszkot és a hálózat alapját a DHCP-hez (pl. 255.255.255.192)
         BASE_IP=$(echo $IP_ADDR | cut -d. -f1-3).0
         calculate_network $BASE_IP $MASK
+        
+        # FIGYELEM: Felülírjuk a kalkulátor adatait a Netplanból kinyert FIX adatokkal!
+        SERVER_IP="$IP_ADDR"
+        if [ ! -z "$EXT_GW" ]; then
+            FW_IP="$EXT_GW"
+        fi
+        
+        # Biztonsági ellenőrzés: Ha a router kapta az első címet, a DHCP ne ossza ki azt!
+        if [ "$FW_IP" == "$FIRST_IP" ]; then
+            LAST_OCTET=$(echo $FIRST_IP | cut -d. -f4)
+            FIRST_IP="${NETWORK_PREFIX}.$((LAST_OCTET + 1))"
+        fi
+
+        echo "Észlelt Szerver IP: $SERVER_IP/$MASK"
+        echo "Észlelt Tűzfal (Router) IP: $FW_IP"
     else
-        echo "Nem sikerült automatikusan kinyerni az IP-t."
-        read -p "Alap IP (pl. 192.168.50.0): " IP_ADDR
-        read -p "Maszk (pl. 26): " MASK
+        echo "Hiba: Nem találtam beállított IP-t! (Megcsináltad a netplan apply-t?)"
+        read -p "Add meg manuálisan az alap IP-t (pl. 192.168.50.0): " IP_ADDR
+        read -p "Add meg a Maszkot (pl. 26): " MASK
         calculate_network $IP_ADDR $MASK
+        
+        read -p "Tűzfal (Router) IP címe [$FW_IP]: " INPUT_FW
+        FW_IP=${INPUT_FW:-$FW_IP}
+        
+        read -p "Szerver IP címe [$SERVER_IP]: " INPUT_SRV
+        SERVER_IP=${INPUT_SRV:-$SERVER_IP}
     fi
 
     echo "--- Csomagok letöltése (MC, DHCP, NFS, Samba, Apache, FTP, SSH) ---"
@@ -62,17 +85,34 @@ case_2() {
 
     echo ""
     echo "Adatok rögzítve és szoftverek telepítve."
-    echo "Észlelt Szerver IP: $SERVER_IP | Tűzfal: $FW_IP | Maszk: $NETMASK"
+    echo "Szerver: $SERVER_IP | Tűzfal: $FW_IP | Maszk: $NETMASK"
 }
 
 case_3() {
     if [ -z "$SERVER_IP" ]; then echo "Hiba: Előbb 2-es gomb!"; return; fi
     echo "[3. Feladat] DHCP konfigurálása"
-    read -p "Add meg a Windows kliens MAC címét: " WIN_MAC
     
+    echo "--- DHCP Tartomány és Kliens beállítása ---"
+    
+    # Kezdő IP bekérése (Alapértelmezett: a hálózat első kiosztható címe)
+    read -p "Add meg a DHCP kezdő IP-címét [$FIRST_IP]: " INPUT_START
+    DHCP_START=${INPUT_START:-$FIRST_IP}
+    
+    # Végpont IP bekérése (Alapértelmezett: a hálózat 30-as végződésű címe)
+    read -p "Add meg a DHCP utolsó IP-címét [${NETWORK_PREFIX}.30]: " INPUT_END
+    DHCP_END=${INPUT_END:-${NETWORK_PREFIX}.30}
+    
+    # Windows MAC cím bekérése
+    read -p "Add meg a Windows kliens MAC címét (pl. 00:11:22:33:44:55): " WIN_MAC
+    
+    # Windows Fix IP bekérése (Alapértelmezett: a hálózat 50-es végződésű címe)
+    read -p "Add meg a Windows kliens fix IP-címét [${NETWORK_PREFIX}.50]: " INPUT_WIN_IP
+    WIN_IP=${INPUT_WIN_IP:-${NETWORK_PREFIX}.50}
+    
+    # Konfigurációs fájl felülírása a megadott változókkal
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
 subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
-  range $FIRST_IP ${NETWORK_PREFIX}.30;
+  range $DHCP_START $DHCP_END;
   option routers $FW_IP;
   option domain-name-servers $SERVER_IP;
   default-lease-time 600;
@@ -80,12 +120,15 @@ subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
 }
 host windows-client {
   hardware ethernet $WIN_MAC;
-  fixed-address ${NETWORK_PREFIX}.50;
+  fixed-address $WIN_IP;
 }
 EOF
+    
+    # Interfész beállítása és újraindítás
     sudo sed -i "s/INTERFACESv4=\"\"/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
     sudo systemctl restart isc-dhcp-server
-    echo "DHCP kész!"
+    
+    echo "DHCP kész! Tartomány: $DHCP_START - $DHCP_END | Windows kliens IP: $WIN_IP"
 }
 
 case_5() {
