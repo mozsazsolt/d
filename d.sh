@@ -151,12 +151,8 @@ case_9() {
     echo "SSH kész a(z) $S_PORT porton!"
 }
 
-Az önmegsemmisítő funkciót (10-es gomb) kiegészítettem úgy, hogy ne csak a fájlt törölje, hanem a Bash előzményeket (history) a memóriából és a lemezről (.bash_history) is teljesen eltüntesse, valamint ürítse a terminál ablakát, így semmi nyom nem marad a képernyőn sem.
 
-A végleges, "tökéletes bűntény" önmegsemmisítő kódja
-Íme a módosított case_10 rész, amit a szkriptbe tettem:
 
-Bash
 case_10() {
     echo "Minden nyom eltüntetése..."
     
