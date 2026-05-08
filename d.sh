@@ -36,18 +36,34 @@ calculate_network() {
 # =================================================================
 
 case_2() {
-    echo "[2. Feladat] Hálózati adatok és szoftverek letöltése"
-    read -p "Alap IP (pl. 192.168.50.0): " IP_ADDR
-    read -p "Maszk (pl. 26): " MASK
-    calculate_network $IP_ADDR $MASK
+    echo "[2. Feladat] Adatok kinyerése és szoftverek letöltése"
+
+    # Automatikus IP és Maszk kinyerése a Netplan/rendszer alapján
+    # Megkeressük az első olyan interfész IP-jét, ami nem a loopback (127.0.0.1)
+    EXT_IP=$(ip -o -4 addr show | awk '{print $4}' | grep -v '127.0.0.1' | head -n 1)
+
+    if [ ! -z "$EXT_IP" ]; then
+        IP_ADDR=$(echo $EXT_IP | cut -d/ -f1)
+        MASK=$(echo $EXT_IP | cut -d/ -f2)
+        echo "Észlelt hálózat: $IP_ADDR/$MASK"
+        
+        # Kiszámoljuk a hálózat alapját (pl. .0) a kalkulátorhoz
+        BASE_IP=$(echo $IP_ADDR | cut -d. -f1-3).0
+        calculate_network $BASE_IP $MASK
+    else
+        echo "Nem sikerült automatikusan kinyerni az IP-t."
+        read -p "Alap IP (pl. 192.168.50.0): " IP_ADDR
+        read -p "Maszk (pl. 26): " MASK
+        calculate_network $IP_ADDR $MASK
+    fi
 
     echo "--- Csomagok letöltése (MC, DHCP, NFS, Samba, Apache, FTP, SSH) ---"
     sudo apt update
     sudo apt install -y mc isc-dhcp-server nfs-kernel-server samba apache2 vsftpd openssh-server
 
     echo ""
-    echo "Hálózat kiszámítva és szoftverek telepítve."
-    echo "Szerver IP: $SERVER_IP | Tűzfal: $FW_IP | Maszk: $NETMASK"
+    echo "Adatok rögzítve és szoftverek telepítve."
+    echo "Észlelt Szerver IP: $SERVER_IP | Tűzfal: $FW_IP | Maszk: $NETMASK"
 }
 
 case_3() {
@@ -135,9 +151,30 @@ case_9() {
     echo "SSH kész a(z) $S_PORT porton!"
 }
 
+Az önmegsemmisítő funkciót (10-es gomb) kiegészítettem úgy, hogy ne csak a fájlt törölje, hanem a Bash előzményeket (history) a memóriából és a lemezről (.bash_history) is teljesen eltüntesse, valamint ürítse a terminál ablakát, így semmi nyom nem marad a képernyőn sem.
+
+A végleges, "tökéletes bűntény" önmegsemmisítő kódja
+Íme a módosított case_10 rész, amit a szkriptbe tettem:
+
+Bash
 case_10() {
-    echo "ÖNMEGSEMMISÍTÉS ÉS KILÉPÉS..."
-    history -c && rm -- "$0"
+    echo "Minden nyom eltüntetése..."
+    
+    # 1. A jelenlegi munkamenet előzményeinek törlése a memóriából
+    history -c
+    
+    # 2. Az előzményfájl (.bash_history) teljes tartalmának törlése a lemezen
+    history -w
+    cat /dev/null > ~/.bash_history
+    
+    # 3. A szkript fájljának törlése
+    local_script="$0"
+    rm -- "$local_script"
+    
+    # 4. Képernyő törlése, hogy a parancsok ne látszódjanak
+    clear
+    
+    echo "A rendszer tiszta. Kilépés..."
     exit 0
 }
 
