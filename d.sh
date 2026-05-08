@@ -141,30 +141,30 @@ EOF
 case_5() {
     echo "[5. Feladat] NFS konfigurálása"
     read -p "Mi legyen az NFS megosztott mappa neve? (pl. megosztas): " NFS_DIR
-    
-    # Ha üresen hagyta, legyen egy alapértelmezett név
     NFS_DIR=${NFS_DIR:-"megosztas"}
     NFS_PATH="/srv/$NFS_DIR"
     
-    # Mappa létrehozása és jogosultságok
-    sudo mkdir -p "$NFS_PATH"
-    sudo chmod 777 "$NFS_PATH"
+    # Mappa és jogok
+    sudo mkdir -p "$NFS_PATH" && sudo chmod 777 "$NFS_PATH"
     
-    # JAVÍTÁS: Biztosítjuk az új sort az exports fájlban, hogy ne ragadjon össze más sorokkal.
-    # A 'printf' biztonságosabb speciális karaktereknél (*).
+    # Ellenőrizzük, hogy benne van-e már ez az útvonal
+    if grep -q "$NFS_PATH" /etc/exports; then
+        echo "Ez a mappa már szerepel az exports fájlban, frissítem a beállítást..."
+        # Töröljük a régi sorát, hogy ne duplikáljuk
+        sudo sed -i "\|$NFS_PATH|d" /etc/exports
+    fi
+
+    # Tiszta sor hozzáadása (printf biztonságosabb a speciális karaktereknél)
     echo "" | sudo tee -a /etc/exports > /dev/null
     printf "%s *(rw,sync,no_subtree_check)\n" "$NFS_PATH" | sudo tee -a /etc/exports
     
     echo "--- Konfiguráció frissítése ---"
-    # Csak akkor írjuk ki a sikert, ha az exportfs valóban hiba nélkül lefutott
+    # exportfs -ra: minden export újraolvasása, -v: részletes lista
     if sudo exportfs -rav; then
         sudo systemctl restart nfs-kernel-server
-        echo "-----------------------------------------------------------------"
         echo "NFS kész a $NFS_PATH mappára!"
-        echo "Kliens oldali csatoláshoz: sudo mount $SERVER_IP:$NFS_PATH /mnt"
-        echo "-----------------------------------------------------------------"
     else
-        echo "HIBA: Az NFS konfiguráció hibás! Ellenőrizd a /etc/exports fájlt."
+        echo "HIBA: Még mindig gáz van az exports fájllal. Nézz bele: sudo nano /etc/exports"
     fi
 }
 
