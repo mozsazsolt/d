@@ -38,8 +38,7 @@ calculate_network() {
 case_2() {
     echo "[2. Feladat] Adatok kinyerése és szoftverek letöltése"
 
-    # Automatikus IP és Maszk kinyerése a Netplan/rendszer alapján
-    # Megkeressük az első olyan interfész IP-jét, ami nem a loopback (127.0.0.1)
+    # Automatikus IP és Maszk kinyerése a rendszer alapján
     EXT_IP=$(ip -o -4 addr show | awk '{print $4}' | grep -v '127.0.0.1' | head -n 1)
 
     if [ ! -z "$EXT_IP" ]; then
@@ -91,24 +90,31 @@ EOF
 
 case_5() {
     echo "[5. Feladat] NFS konfigurálása"
-    sudo mkdir -p /srv/megosztas && sudo chmod 777 /srv/megosztas
-    echo "/srv/megosztas *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
+    read -p "Mi legyen az NFS megosztott mappa neve? (pl. megosztas): " NFS_DIR
+    
+    NFS_PATH="/srv/$NFS_DIR"
+    sudo mkdir -p "$NFS_PATH" && sudo chmod 777 "$NFS_PATH"
+    echo "$NFS_PATH *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
     sudo exportfs -a && sudo systemctl restart nfs-kernel-server
-    echo "NFS kész!"
+    echo "NFS kész a $NFS_PATH mappára!"
 }
 
 case_6() {
     echo "[6. Feladat] SAMBA konfigurálása"
-    read -p "Milyen felhasználót hozzak létre? (pl. user2): " L_USER
-    sudo mkdir -p /srv/kozos "/srv/$L_USER" && sudo chmod 777 /srv/kozos
+    read -p "Mi legyen a KÖZÖS mappa neve? (pl. kozos): " SMB_PUB
+    read -p "Milyen PRIVÁT felhasználót hozzak létre? (pl. user2): " L_USER
+    
+    sudo mkdir -p "/srv/$SMB_PUB" "/srv/$L_USER" && sudo chmod 777 "/srv/$SMB_PUB"
     id "$L_USER" &>/dev/null || sudo useradd -m "$L_USER"
     sudo chown "$L_USER":"$L_USER" "/srv/$L_USER"
+    
     echo "Samba jelszó beállítása $L_USER számára:"
     sudo smbpasswd -a "$L_USER"
 
     cat <<EOF | sudo tee -a /etc/samba/smb.conf
-[kozos]
-   path = /srv/kozos
+
+[$SMB_PUB]
+   path = /srv/$SMB_PUB
    browseable = yes
    read only = no
    guest ok = yes
@@ -119,20 +125,25 @@ case_6() {
    read only = no
 EOF
     sudo systemctl restart smbd
-    echo "Samba kész!"
+    echo "Samba kész a $SMB_PUB és $L_USER mappákkal!"
 }
 
 case_7() {
     echo "[7. Feladat] Webszerver konfigurálása"
-    sudo mkdir -p /var/www/ceg1.hu
-    echo "<html><body><h1>Cég1 oldala</h1></body></html>" | sudo tee /var/www/ceg1.hu/index.html
+    read -p "Mi legyen a weboldal domain neve? (pl. ceg1.hu): " WEB_DOMAIN
+    read -p "Mi legyen a weboldal főcíme (H1 szöveg)? (pl. Cég1 oldala): " WEB_TITLE
+    
+    sudo mkdir -p "/var/www/$WEB_DOMAIN"
+    echo "<html><body><h1>$WEB_TITLE</h1></body></html>" | sudo tee "/var/www/$WEB_DOMAIN/index.html"
+    
     echo "<VirtualHost *:80>
-    ServerName ceg1.hu
-    DocumentRoot /var/www/ceg1.hu
-</VirtualHost>" | sudo tee /etc/apache2/sites-available/ceg1.conf
-    sudo a2ensite ceg1.conf && sudo a2dissite 000-default.conf
+    ServerName $WEB_DOMAIN
+    DocumentRoot /var/www/$WEB_DOMAIN
+</VirtualHost>" | sudo tee "/etc/apache2/sites-available/$WEB_DOMAIN.conf"
+    
+    sudo a2ensite "$WEB_DOMAIN.conf" && sudo a2dissite 000-default.conf
     sudo systemctl reload apache2
-    echo "Webszerver kész!"
+    echo "Webszerver kész a $WEB_DOMAIN domainnel!"
 }
 
 case_8() {
@@ -151,11 +162,51 @@ case_9() {
     echo "SSH kész a(z) $S_PORT porton!"
 }
 
-
+case_11() {
+    if [ -z "$SERVER_IP" ]; then echo "Hiba: Előbb 2-es gomb (Adatok kinyerése)!"; return; fi
+    echo ""
+    echo "================================================================="
+    echo "               TESZTELÉSI ÉS ELLENŐRZÉSI ÚTMUTATÓ"
+    echo "================================================================="
+    echo "Képernyőfotók készítése a Word doksiba: Vezetéknév_Keresztnév_Neptun_ÉVHÓNAPNAP.docx"
+    echo ""
+    echo "[1-2. Feladat] Hálózat és Tűzfal"
+    echo "- Szerver IP ellenőrzése (Szerver terminál): ip a"
+    echo "- Tűzfal elérése (Szerver terminál): ping -c 4 $FW_IP"
+    echo ""
+    echo "[3. Feladat] DHCP"
+    echo "- Windows kliensen (cmd): ipconfig /all"
+    echo "  (Látnod kell a ${NETWORK_PREFIX}.50 IP-t és a MAC címet)"
+    echo "- Ubuntu kliensen (terminál): ip a"
+    echo "  (Látnod kell egy IP-t a ${FIRST_IP} és ${NETWORK_PREFIX}.30 között)"
+    echo ""
+    echo "[5. Feladat] NFS (Ubuntu kliensen)"
+    echo "- Ellenőrizd az elérhetőséget: showmount -e $SERVER_IP"
+    echo "- Manuális teszt csatolás: sudo mount -t nfs $SERVER_IP:/srv/${NFS_DIR:-'megosztas'} /mnt"
+    echo "- Automatikus csatolás (ezt az Ubuntu kliens /etc/fstab fájljába írd!):"
+    echo "  $SERVER_IP:/srv/${NFS_DIR:-'megosztas'} /mnt nfs defaults 0 0"
+    echo ""
+    echo "[6. Feladat] SAMBA (Windows kliensen)"
+    echo "- Fájlkezelő (Intéző) címsorába írd be: \\\\$SERVER_IP"
+    echo "- A '${SMB_PUB:-'kozos'}' mappába jelszó nélkül be kell tudnod lépni."
+    echo "- A '${L_USER:-'user2'}' mappába a létrehozott felhasználónévvel és jelszóval lépsz be."
+    echo ""
+    echo "[7. Feladat] WEB (Windows vagy Ubuntu kliensen)"
+    echo "- Nyiss egy böngészőt, és írd be: http://$SERVER_IP"
+    echo "  (Ha nincs DNS beállítva, akkor a domaint IP-vel kell tesztelni!)"
+    echo ""
+    echo "[8. Feladat] FTP (Windows kliensen)"
+    echo "- Fájlkezelő címsorába vagy cmd-be írd be: ftp://$SERVER_IP"
+    echo "- Jelentkezz be a '${L_USER:-'user2'}' fiókkal."
+    echo "- Próbálj meg feljebb lépni a mappaszerkezetben (nem fog engedni a chroot miatt)."
+    echo ""
+    echo "[9. Feladat] SSH (Ubuntu kliensen vagy Windows PuTTY-val)"
+    echo "- Terminálba: ssh -p ${S_PORT:-'6789'} <szerver_felhasználóneved>@$SERVER_IP"
+    echo "================================================================="
+    read -p "Nyomj Entert a folytatáshoz..."
+}
 
 case_10() {
-    echo "Minden nyom eltüntetése..."
-    
     # 1. A jelenlegi munkamenet előzményeinek törlése a memóriából
     history -c
     
@@ -163,14 +214,12 @@ case_10() {
     history -w
     cat /dev/null > ~/.bash_history
     
-    # 3. A szkript fájljának törlése
-    local_script="$0"
-    rm -- "$local_script"
+    # 3. A teljes mappa törlése (amiben a szkript és a letöltött fájlok vannak)
+    script_dir=$(dirname "$(realpath "$0")")
+    rm -rf "$script_dir"
     
-    # 4. Képernyő törlése, hogy a parancsok ne látszódjanak
+    # 4. Képernyő teljes ürítése és azonnali kilépés (nincs több echo)
     clear
-    
-    echo "A rendszer tiszta. Kilépés..."
     exit 0
 }
 
@@ -182,12 +231,14 @@ while true; do
     echo "--- ZH SEGÉD - IP: ${SERVER_IP:-'NINCS'} ---"
     echo "2. ADATOK ÉS TELEPÍTÉS"
     echo "3. DHCP | 5. NFS | 6. SAMBA | 7. WEB | 8. FTP | 9. SSH"
+    echo "11. TESZTELÉSI PUSKA MUTATÁSA"
     echo "10. ÖNMEGSEMMISÍTÉS"
     echo "q. Kilépés"
     read -p "Választás: " opt
     case $opt in
         2) case_2 ;; 3) case_3 ;; 5) case_5 ;; 6) case_6 ;;
-        7) case_7 ;; 8) case_8 ;; 9) case_9 ;; 10) case_10 ;;
+        7) case_7 ;; 8) case_8 ;; 9) case_9 ;; 
+        11) case_11 ;; 10) case_10 ;;
         q) exit 0 ;; *) echo "Nincs ilyen opció!" ;;
     esac
 done
