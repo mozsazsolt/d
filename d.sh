@@ -92,24 +92,29 @@ case_3() {
     if [ -z "$SERVER_IP" ]; then echo "Hiba: Előbb 2-es gomb!"; return; fi
     echo "[3. Feladat] DHCP konfigurálása"
     
-    echo "--- DHCP Tartomány és Kliens beállítása ---"
+    echo "Hálózati előtag: $NETWORK_PREFIX."
+    echo "--- Elég csak az utolsó számjegyet megadni (pl. 30) ---"
     
-    # Kezdő IP bekérése (Alapértelmezett: a hálózat első kiosztható címe)
-    read -p "Add meg a DHCP kezdő IP-címét [$FIRST_IP]: " INPUT_START
-    DHCP_START=${INPUT_START:-$FIRST_IP}
+    # Kezdő IP vége (Alapértelmezett: .1 vagy amit a calculate_network kidobott)
+    DEF_START=$(echo $FIRST_IP | cut -d. -f4)
+    read -p "DHCP tartomány kezdete (.X) [$DEF_START]: " IN_START
+    OCTET_START=${IN_START:-$DEF_START}
+    DHCP_START="${NETWORK_PREFIX}.${OCTET_START}"
     
-    # Végpont IP bekérése (Alapértelmezett: a hálózat 30-as végződésű címe)
-    read -p "Add meg a DHCP utolsó IP-címét [${NETWORK_PREFIX}.30]: " INPUT_END
-    DHCP_END=${INPUT_END:-${NETWORK_PREFIX}.30}
+    # Végpont IP vége (Alapértelmezett: .30)
+    read -p "DHCP tartomány vége (.X) [30]: " IN_END
+    OCTET_END=${IN_END:-30}
+    DHCP_END="${NETWORK_PREFIX}.${OCTET_END}"
     
-    # Windows MAC cím bekérése
-    read -p "Add meg a Windows kliens MAC címét (pl. 00:11:22:33:44:55): " WIN_MAC
+    # Windows Fix IP vége (Alapértelmezett: .50)
+    read -p "Windows kliens fix IP-je (.X) [50]: " IN_WIN
+    OCTET_WIN=${IN_WIN:-50}
+    WIN_IP="${NETWORK_PREFIX}.${OCTET_WIN}"
     
-    # Windows Fix IP bekérése (Alapértelmezett: a hálózat 50-es végződésű címe)
-    read -p "Add meg a Windows kliens fix IP-címét [${NETWORK_PREFIX}.50]: " INPUT_WIN_IP
-    WIN_IP=${INPUT_WIN_IP:-${NETWORK_PREFIX}.50}
+    # Windows MAC cím (ezt sajnos be kell gépelni/másolni)
+    read -p "Windows kliens MAC címe (pl. 08:00:27:AA:BB:CC): " WIN_MAC
     
-    # Konfigurációs fájl felülírása a megadott változókkal
+    # Konfigurációs fájl generálása
     cat <<EOF | sudo tee /etc/dhcp/dhcpd.conf
 subnet ${NETWORK_PREFIX}.0 netmask $NETMASK {
   range $DHCP_START $DHCP_END;
@@ -124,13 +129,15 @@ host windows-client {
 }
 EOF
     
-    # Interfész beállítása és újraindítás
     sudo sed -i "s/INTERFACESv4=\"\"/INTERFACESv4=\"$INTERFACE\"/" /etc/default/isc-dhcp-server
     sudo systemctl restart isc-dhcp-server
     
-    echo "DHCP kész! Tartomány: $DHCP_START - $DHCP_END | Windows kliens IP: $WIN_IP"
+    echo "-----------------------------------------------------------------"
+    echo "DHCP kész!"
+    echo "Tartomány: $DHCP_START - $DHCP_END"
+    echo "Windows fix IP: $WIN_IP"
+    echo "-----------------------------------------------------------------"
 }
-
 case_5() {
     echo "[5. Feladat] NFS konfigurálása"
     read -p "Mi legyen az NFS megosztott mappa neve? (pl. megosztas): " NFS_DIR
@@ -224,6 +231,7 @@ case_11() {
     echo "  (Látnod kell egy IP-t a ${FIRST_IP} és ${NETWORK_PREFIX}.30 között)"
     echo ""
     echo "[5. Feladat] NFS (Ubuntu kliensen)"
+    echo "- TELEPÍTÉS: sudo apt update && sudo apt install -y nfs-common"
     echo "- Ellenőrizd az elérhetőséget: showmount -e $SERVER_IP"
     echo "- Manuális teszt csatolás: sudo mount -t nfs $SERVER_IP:/srv/${NFS_DIR:-'megosztas'} /mnt"
     echo "- Automatikus csatolás (ezt az Ubuntu kliens /etc/fstab fájljába írd!):"
