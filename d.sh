@@ -142,11 +142,30 @@ case_5() {
     echo "[5. Feladat] NFS konfigurálása"
     read -p "Mi legyen az NFS megosztott mappa neve? (pl. megosztas): " NFS_DIR
     
+    # Ha üresen hagyta, legyen egy alapértelmezett név
+    NFS_DIR=${NFS_DIR:-"megosztas"}
     NFS_PATH="/srv/$NFS_DIR"
-    sudo mkdir -p "$NFS_PATH" && sudo chmod 777 "$NFS_PATH"
-    echo "$NFS_PATH *(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
-    sudo exportfs -a && sudo systemctl restart nfs-kernel-server
-    echo "NFS kész a $NFS_PATH mappára!"
+    
+    # Mappa létrehozása és jogosultságok
+    sudo mkdir -p "$NFS_PATH"
+    sudo chmod 777 "$NFS_PATH"
+    
+    # JAVÍTÁS: Biztosítjuk az új sort az exports fájlban, hogy ne ragadjon össze más sorokkal.
+    # A 'printf' biztonságosabb speciális karaktereknél (*).
+    echo "" | sudo tee -a /etc/exports > /dev/null
+    printf "%s *(rw,sync,no_subtree_check)\n" "$NFS_PATH" | sudo tee -a /etc/exports
+    
+    echo "--- Konfiguráció frissítése ---"
+    # Csak akkor írjuk ki a sikert, ha az exportfs valóban hiba nélkül lefutott
+    if sudo exportfs -rav; then
+        sudo systemctl restart nfs-kernel-server
+        echo "-----------------------------------------------------------------"
+        echo "NFS kész a $NFS_PATH mappára!"
+        echo "Kliens oldali csatoláshoz: sudo mount $SERVER_IP:$NFS_PATH /mnt"
+        echo "-----------------------------------------------------------------"
+    else
+        echo "HIBA: Az NFS konfiguráció hibás! Ellenőrizd a /etc/exports fájlt."
+    fi
 }
 
 case_6() {
